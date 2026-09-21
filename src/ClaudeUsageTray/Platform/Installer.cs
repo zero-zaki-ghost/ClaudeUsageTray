@@ -152,6 +152,12 @@ internal static class Installer
                 Arguments = $"/c timeout /t 3 /nobreak > nul & rd /s /q \"{InstallDir}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
+
+                // ★ 作業ディレクトリを削除対象の外に必ず置く。
+                //   UseShellExecute=false は親の CWD を継承するので、配置先から
+                //   起動された場合 cmd 自身がそのフォルダを掴んでしまい、
+                //   中身は消せてもフォルダ本体が空のまま残る（実機で踏んだ）。
+                WorkingDirectory = Path.GetTempPath(),
             });
         }
         catch (Exception ex)
