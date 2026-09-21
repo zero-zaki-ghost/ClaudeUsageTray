@@ -70,23 +70,33 @@ internal sealed record Options(
     /// ★ セキュリティ上の要: 取得先はアクセストークンを Bearer で送る相手になる。
     ///
     /// \-\-endpoint を無制限に許すと、ショートカットや Run キーを書き換えるだけで
-    /// 「トークンを任意のサーバへ送らせる」ことができてしまう。平文 http なら
-    /// 経路上でも読める。
+    /// 「トークンを任意のサーバへ送らせる」ことができてしまう。
+    ///
+    /// ⚠ 「https なら許す」では対策にならない。攻撃者は自分のサーバに証明書を
+    ///   用意できるので、https://evil.example.com/ を指定すればそのまま盗める。
+    ///   TLS は経路を守るだけで、送り先が正しいことは保証しない。
     ///
     /// 許すのは次の 2 つだけ:
-    ///   ・https（検証用に別ホストを立てる場合）
-    ///   ・ループバック宛て（スタブサーバ。http でも可＝経路が端末内で閉じる）
+    ///   ・既定の取得先と同じホスト宛ての https（＝ api.anthropic.com）
+    ///   ・ループバック宛て（検証用スタブ。経路が端末内で閉じるので http でも可）
     ///
     /// それ以外は黙って既定値に戻す。引数を無視するだけなのでアプリは動き続ける。
     /// </summary>
     private static bool IsAllowedEndpoint(Uri u)
     {
-        if (u.Scheme == Uri.UriSchemeHttps) return true;
+        // 検証用のスタブサーバ。端末の外へは出ない。
+        if (u.IsLoopback && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps))
+            return true;
 
-        if (u.Scheme == Uri.UriSchemeHttp && u.IsLoopback) return true;
+        // 本番の取得先と同じホストのみ。パスの差し替えは許す（?at_wall=1 等）。
+        var official = new Uri(UsageEndpointClient.DefaultEndpoint);
+        if (u.Scheme == Uri.UriSchemeHttps
+            && string.Equals(u.Host, official.Host, StringComparison.OrdinalIgnoreCase))
+            return true;
 
         Config.Log.Warn(
-            $"--endpoint を無視しました（https かループバック宛てのみ許可）: {u.Scheme}://{u.Host}");
+            $"--endpoint を無視しました（{official.Host} かループバック宛てのみ許可）: "
+            + $"{u.Scheme}://{u.Host}");
         return false;
     }
 }
