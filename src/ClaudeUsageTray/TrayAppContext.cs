@@ -81,6 +81,18 @@ internal sealed class TrayAppContext : ApplicationContext
 
         menu.Items.Add("表示位置を動かす（Ctrl+Shift+U）", null, (_, _) => _overlay?.ToggleMoveMode());
 
+        var clickThroughItem = new ToolStripMenuItem("クリックを下へ透過する")
+        {
+            CheckOnClick = true,
+            Checked = _settings.Overlay.ClickThrough,
+            ToolTipText = "ONにするとパネルを掴めなくなります。移動は Ctrl+Shift+U から。",
+        };
+        clickThroughItem.CheckedChanged += (_, _) =>
+        {
+            if (_overlay is not null) _overlay.ClickThrough = clickThroughItem.Checked;
+        };
+        menu.Items.Add(clickThroughItem);
+
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("ログフォルダを開く…", null, (_, _) => OpenFolder(AppPaths.LogDir));
         menu.Items.Add("キャッシュフォルダを開く…", null, (_, _) => OpenFolder(AppPaths.CacheDir));

@@ -33,12 +33,21 @@ internal sealed class OverlayWindow : Form
     private bool _hiddenByFullscreen;
     private Point _dragOrigin;
     private bool _dragging;
+    private bool _hovered;
+
+    /// <summary>
+    /// ★ CreateParams に含めるのが肝。SetWindowLongPtr で後付けするだけだと、
+    ///   Opacity を変えたときに WinForms が CreateParams から ExStyle を作り直して
+    ///   このフラグを消してしまう（透過が勝手に外れる／戻らなくなる）。
+    /// </summary>
+    private bool _clickThrough;
 
     public OverlayWindow(AppSettings settings, Func<AppState> getState, ContextMenuStrip menu)
     {
         _settings = settings;
         _getState = getState;
         _menu = menu;
+        _clickThrough = settings.Overlay.ClickThrough;
 
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -62,26 +71,54 @@ internal sealed class OverlayWindow : Form
             var cp = base.CreateParams;
             // Alt+Tab に出さず、フォーカスも奪わない
             cp.ExStyle |= NativeMethods.WS_EX_TOOLWINDOW | NativeMethods.WS_EX_NOACTIVATE;
+
+            // 移動モード中は必ず掴めるようにする
+            if (_clickThrough && !_moveMode) cp.ExStyle |= NativeMethods.WS_EX_TRANSPARENT;
+
             return cp;
         }
     }
 
-    /// <summary>クリックを下のウィンドウへ素通りさせる。移動モード中だけ解除する。</summary>
-    private void ApplyClickThrough(bool clickThrough)
+    /// <summary>クリックを下のウィンドウへ素通りさせるかどうかを実ウィンドウへ反映する。</summary>
+    private void ApplyClickThrough()
     {
+        if (!IsHandleCreated) return;
+
+        bool on = _clickThrough && !_moveMode;
         var ex = (long)NativeMethods.GetWindowLongPtr(Handle, NativeMethods.GWL_EXSTYLE);
 
-        if (clickThrough) ex |= NativeMethods.WS_EX_TRANSPARENT;
+        if (on) ex |= NativeMethods.WS_EX_TRANSPARENT;
         else ex &= ~NativeMethods.WS_EX_TRANSPARENT;
 
         NativeMethods.SetWindowLongPtr(Handle, NativeMethods.GWL_EXSTYLE, (IntPtr)ex);
+    }
+
+    /// <remarks>
+    /// デザイナ用のコンポーネントではないのでシリアライズさせない（WFO1000 対策）。
+    /// </remarks>
+    [System.ComponentModel.DesignerSerializationVisibility(
+        System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public bool ClickThrough
+    {
+        get => _clickThrough;
+        set
+        {
+            if (_clickThrough == value) return;
+
+            _clickThrough = value;
+            _settings.Overlay.ClickThrough = value;
+            _settings.Save();
+
+            ApplyClickThrough();
+            Invalidate();
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
 
-        ApplyClickThrough(true);
+        ApplyClickThrough();
         RestorePosition();
 
         if (!NativeMethods.RegisterHotKey(Handle, HotkeyIdMove,
@@ -105,23 +142,43 @@ internal sealed class OverlayWindow : Form
         base.WndProc(ref m);
     }
 
+    /// <summary>
+    /// クリック透過を ON にしていると掴めないので、一時的に解除して動かせるようにする。
+    /// 透過が OFF のときは常に掴めるので、この切り替えは主に見た目の合図。
+    /// </summary>
     public void ToggleMoveMode()
     {
         _moveMode = !_moveMode;
 
-        ApplyClickThrough(!_moveMode);
+        // ★ Opacity を先に変える。後にすると WinForms が ExStyle を作り直して
+        //   直前に立てた WS_EX_TRANSPARENT を消してしまう。
         Opacity = _moveMode ? 1.0 : _settings.Overlay.Opacity;
+        ApplyClickThrough();
 
         if (!_moveMode) SavePosition();
 
         Invalidate();
     }
 
-    // ---- ドラッグ移動（移動モード中のみ。クリック透過中はそもそも届かない） ----
+    // ---- ドラッグ移動 ----
+
+    protected override void OnMouseEnter(EventArgs e)
+    {
+        _hovered = true;
+        Invalidate();
+        base.OnMouseEnter(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        _hovered = false;
+        Invalidate();
+        base.OnMouseLeave(e);
+    }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
-        if (_moveMode && e.Button == MouseButtons.Left)
+        if (e.Button == MouseButtons.Left)
         {
             _dragging = true;
             _dragOrigin = e.Location;
@@ -145,7 +202,7 @@ internal sealed class OverlayWindow : Form
             SavePosition();
         }
 
-        if (_moveMode && e.Button == MouseButtons.Right)
+        if (e.Button == MouseButtons.Right)
             _menu.Show(this, e.Location);
 
         base.OnMouseUp(e);
@@ -268,11 +325,29 @@ internal sealed class OverlayWindow : Form
             }
         }
 
+        // 掴めることの合図。移動モードは赤枠、ホバー中は控えめな白枠。
         if (_moveMode)
         {
             using var pen = new Pen(Color.FromArgb(230, 0xE5, 0x48, 0x4D), 2);
             g.DrawRectangle(pen, 1, 1, Width - 2, Height - 2);
         }
+        else if (_hovered && !_clickThrough)
+        {
+            using var pen = new Pen(Color.FromArgb(120, 255, 255, 255), 1);
+            g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            DrawGrip(g);
+        }
+    }
+
+    /// <summary>左端に点 6 個のグリップを描く。「ここを掴んで動かせる」の合図。</summary>
+    private void DrawGrip(Graphics g)
+    {
+        using var brush = new SolidBrush(Color.FromArgb(120, 255, 255, 255));
+        int cx = 4, cy = Height / 2;
+
+        for (int col = 0; col < 2; col++)
+            for (int row = -1; row <= 1; row++)
+                g.FillRectangle(brush, cx + col * 3, cy + row * 4 - 1, 2, 2);
     }
 
     /// <summary>表示テキストを「文字列 + 色」の並びとして組み立てる。</summary>

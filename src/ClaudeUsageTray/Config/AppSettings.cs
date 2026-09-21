@@ -14,6 +14,14 @@ internal sealed class OverlaySettings
     [JsonPropertyName("hideOnFullscreen")] public bool HideOnFullscreen { get; set; } = true;
 
     /// <summary>
+    /// クリックを下のウィンドウへ素通りさせるか。
+    /// 既定は false（＝素通りさせない）。透過していると掴めず、移動もメニューも
+    /// ホットキー頼みになって入口が分からなくなるため。
+    /// 邪魔なときはメニューから ON にする。
+    /// </summary>
+    [JsonPropertyName("clickThrough")] public bool ClickThrough { get; set; }
+
+    /// <summary>
     /// 位置は「モニタのデバイス名 + 作業領域に対する相対座標」で持つ。
     /// 絶対座標で保存すると解像度変更やモニタの抜き差しで画面外に飛ぶ。
     /// </summary>

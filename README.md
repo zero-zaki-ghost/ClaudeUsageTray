@@ -36,6 +36,19 @@ dotnet publish src/ClaudeUsageTray -c Release -o publish
 framework-dependent。`Microsoft.WindowsDesktop.App` が必要（導入済み）。
 `PublishTrimmed` / `PublishAot` は WinForms 非対応なので使わない。
 
+## 操作
+
+画面の右下に常時表示されるパネルが主たる表示。
+
+| 操作 | 効果 |
+|---|---|
+| **パネルをドラッグ** | 移動。位置は自動で保存される |
+| **パネルを右クリック** | メニュー（更新 / 常時表示 / クリック透過 / 終了） |
+| **Ctrl+Shift+U** | 移動モード。クリック透過を ON にしているときでも掴めるようになる |
+
+「クリックを下へ透過する」を ON にすると、パネルの上のクリックが下のウィンドウへ
+素通りするようになる代わりに**掴めなくなる**ので、移動は Ctrl+Shift+U から行う。
+
 ## コマンドライン引数
 
 | 引数 | 効果 |
