@@ -42,6 +42,19 @@ internal sealed class PollingService : IDisposable
     private readonly Random _jitter = new();
     private Task? _loop;
 
+    /// <summary>
+    /// ★ 取得処理を 1 本に直列化する。
+    ///
+    /// メニューの「今すぐ更新」は定期ループとは独立した Task で走るため、
+    /// 押した瞬間に定期取得が実行中だと 2 本が並行する。すると
+    ///   ・CredentialsReader の静的キャッシュに無同期で読み書きが起きる
+    ///   ・先に始まった古い結果が、後から来た新しい結果を上書きしうる
+    ///     （表示が一瞬巻き戻る）
+    /// HTTP 自体は UsageEndpointClient 側でも直列化しているが、
+    /// 認証情報の読み取りと状態の発行はその外側なので、ここで囲う必要がある。
+    /// </summary>
+    private readonly SemaphoreSlim _pollGate = new(1, 1);
+
     public event Action<AppState>? StateChanged;
 
     public AppState Current { get; private set; } = AppState.Initial;
@@ -95,6 +108,15 @@ internal sealed class PollingService : IDisposable
     {
         try
         {
+            await _pollGate.WaitAsync(ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        try
+        {
             // ★ 毎回読み直す。本体がトークンを更新して書き戻したら自動で追従する。
             var creds = CredentialsReader.Read();
 
@@ -135,6 +157,10 @@ internal sealed class PollingService : IDisposable
                 StatusDetail = $"{ex.GetType().Name}: {Log.ShortMessage(ex)}",
             });
         }
+        finally
+        {
+            _pollGate.Release();
+        }
     }
 
     private void Publish(AppState state)
@@ -148,5 +174,6 @@ internal sealed class PollingService : IDisposable
         _cts.Cancel();
         try { _loop?.Wait(TimeSpan.FromSeconds(2)); } catch { /* 終了時の例外は無視 */ }
         _cts.Dispose();
+        _pollGate.Dispose();
     }
 }

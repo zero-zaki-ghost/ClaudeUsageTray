@@ -316,7 +316,6 @@ internal sealed class OverlayWindow : Form
 
         using var font = new Font("Segoe UI Semibold", _settings.Overlay.FontSizePx,
             FontStyle.Regular, GraphicsUnit.Pixel);
-        using var sepBrush = new SolidBrush(Color.FromArgb(90, 255, 255, 255));
         // ★ MeasureTrailingSpaces が無いと GenericTypographic は末尾の空白を幅に数えず、
         //   次のセグメントが詰まって "5h32%" のようにくっつく。
         using var format = new StringFormat(StringFormat.GenericTypographic)
@@ -344,7 +343,18 @@ internal sealed class OverlayWindow : Form
         if (Math.Abs(Width - wantW) > 1 || Math.Abs(Height - wantH) > 1)
         {
             Size = new Size(Math.Max(80, wantW), Math.Max(20, wantH));
-            Region = new Region(RoundedPath(new Rectangle(0, 0, Width, Height), 6));
+
+            // ★ GraphicsPath はネイティブの GDI+ ハンドルを持つので明示的に捨てる。
+            //   using を付けないとファイナライザ任せになり、表示文字列の桁数が
+            //   変わるたびに積み上がる。
+            //   古い Region も、WinForms の実装に依存せず自分で捨てておく。
+            using (var path = RoundedPath(new Rectangle(0, 0, Width, Height), 6))
+            {
+                var oldRegion = Region;
+                Region = new Region(path);
+                oldRegion?.Dispose();
+            }
+
             Invalidate();
             return;
         }

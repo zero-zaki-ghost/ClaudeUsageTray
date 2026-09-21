@@ -29,7 +29,10 @@ namespace ClaudeUsageTray.Config;
 
 internal sealed class OverlaySettings
 {
-    [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
+    // ⚠ "enabled" は意図的に持たない。
+    //    パネルを隠せるようにすると、トレイが無い以上メニューに辿り着けなくなり、
+    //    終了する手段まで失われる（0 章「UI を殺せる設定を置かない」）。
+    //    設定項目として存在すると「効くはず」と誤解させるので、定義ごと削除した。
 
     [JsonPropertyName("opacity")] public double Opacity { get; set; } = 0.82;
 

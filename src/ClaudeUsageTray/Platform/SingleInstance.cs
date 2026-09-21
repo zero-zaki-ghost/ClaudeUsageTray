@@ -14,6 +14,8 @@ namespace ClaudeUsageTray.Platform;
 // =============================================================================
 internal sealed class SingleInstance : IDisposable
 {
+    private static SingleInstance? _current;
+
     private readonly Mutex _mutex;
     private bool _owned;
 
@@ -27,12 +29,33 @@ internal sealed class SingleInstance : IDisposable
     public static SingleInstance? TryAcquire()
     {
         var mutex = new Mutex(initiallyOwned: true, @"Local\ClaudeUsageTray", out bool createdNew);
-        if (createdNew) return new SingleInstance(mutex);
+        if (createdNew)
+        {
+            _current = new SingleInstance(mutex);
+            return _current;
+        }
 
         mutex.Dispose();
         return null;
     }
 
+    /// <summary>
+    /// ★ 別プロセスに常駐を引き継ぐ前に、必ず先に手放すこと。
+    ///
+    /// 握ったまま新しいプロセスを起動すると、新プロセスは起動直後の
+    /// <see cref="TryAcquire"/> に失敗し「既に動いている」と判断して黙って終了する。
+    /// その後こちらも終了するので、**常駐が 1 つも残らない**。
+    /// 実際にメニューからの自動起動有効化でこれを踏んだ。
+    ///
+    /// 保持していない場合（--install など）は何もしない。
+    /// </summary>
+    public static void ReleaseCurrent()
+    {
+        _current?.Dispose();
+        _current = null;
+    }
+
+    /// <summary>ReleaseCurrent と Program.Main の using で二重に呼ばれるので、冪等にしてある。</summary>
     public void Dispose()
     {
         if (_owned)
@@ -40,7 +63,9 @@ internal sealed class SingleInstance : IDisposable
             try { _mutex.ReleaseMutex(); }
             catch (ApplicationException) { /* 別スレッドが所有していた場合。無視してよい */ }
             _owned = false;
+            _mutex.Dispose();
         }
-        _mutex.Dispose();
+
+        if (ReferenceEquals(_current, this)) _current = null;
     }
 }

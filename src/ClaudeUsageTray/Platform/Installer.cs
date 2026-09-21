@@ -67,6 +67,11 @@ internal static class Installer
 
             AutoStart.Enable(InstalledExe);
 
+            // ★ 新プロセスを起こす前に、単一インスタンスの Mutex を手放す。
+            //   握ったままだと新プロセスが「既に動いている」と判断して即終了し、
+            //   その直後にこちらも終了するため常駐が 1 つも残らなくなる。
+            SingleInstance.ReleaseCurrent();
+
             Process.Start(new ProcessStartInfo(InstalledExe) { UseShellExecute = true });
 
             MessageBox.Show(
@@ -98,10 +103,8 @@ internal static class Installer
             {
                 if (IsRunningFromInstallDir())
                 {
-                    // ★ 自分自身が入っているフォルダは、自分が動いている間は消せない。
-                    //   案内どおりに配置先の exe を直接叩くと必ずこの経路に入るので、
-                    //   外部プロセスに「少し待ってから消す」よう頼んで抜ける。
-                    ScheduleSelfDelete();
+                    // 自分自身が入っているフォルダは、自分が動いている間は消せない。
+                    // 案内どおりに配置先の exe を直接叩くと必ずこの経路に入る。
                     deferred = true;
                 }
                 else
@@ -117,6 +120,11 @@ internal static class Installer
                     : $"配置したファイルを削除しました:\n{InstallDir}\n\n") +
                 $"設定とログは残しています:\n{AppPaths.AppDataDir}",
                 "ClaudeUsageTray", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            // ★ 削除の予約はダイアログを閉じた「後」に出す。
+            //   先に予約すると、ユーザーが文面を読んでいる間に待ち時間が経過し、
+            //   「閉じた直後に削除されます」という案内と実際の順序がずれる。
+            if (deferred) ScheduleSelfDelete();
         }
         catch (Exception ex)
         {

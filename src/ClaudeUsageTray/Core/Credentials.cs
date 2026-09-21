@@ -39,13 +39,18 @@ namespace ClaudeUsageTray.Core;
 /// </summary>
 internal sealed record Credentials(string AccessToken, DateTimeOffset ExpiresAt, string? SubscriptionType)
 {
+    // ⚠ 以下 3 つは現時点でどこからも呼ばれていない。Phase 2 の 401 フロー
+    //    （ShortWatch: 401 を受けたらトークンが入れ替わるまで .credentials.json の
+    //    更新を短間隔で見張る）で使う前提で先に置いてある。
+    //    Phase 2 に着手しないと決めたら消すこと。
+
     public TimeSpan Remaining => ExpiresAt - DateTimeOffset.UtcNow;
 
     public bool IsExpired => ExpiresAt != default && Remaining <= TimeSpan.Zero;
 
     /// <summary>
     /// 「前回と同じトークンか」の判定用。生のトークンを常駐オブジェクトに
-    /// 持ち続けないための指紋。
+    /// 持ち続けないための指紋。Phase 2 の 401 リトライ判定で使う。
     /// </summary>
     public string Fingerprint
     {
