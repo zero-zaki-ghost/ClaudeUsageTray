@@ -2,16 +2,24 @@ using System.Text.Json.Serialization;
 
 namespace ClaudeUsageTray.Core;
 
-/// <summary>
-/// /api/oauth/usage のレスポンス。
-///
-/// ★ サーバー側スキーマは passthrough（未知フィールドが増えうる）。
-///   System.Text.Json は既定で未知プロパティを無視するので、そのまま耐える。
-///
-/// ★ five_hour / seven_day / nimbus_quill / cinder_cove などのトップレベル
-///   コードネーム窓は「あえて」持たない。分類は limits[] だけで行う
-///   （内部スキーマに "Classify a row on this, never on a label." と明記されている）。
-/// </summary>
+// =============================================================================
+//  レスポンス DTO
+// -----------------------------------------------------------------------------
+//  【設計思想】
+//
+//  非公開 API を相手にするので「知らないものは黙って捨てる」姿勢で作る。
+//
+//  ・未知のプロパティは無視する（System.Text.Json の既定動作をそのまま使う）。
+//    サーバー側スキーマは passthrough で、フィールドは今後も増える。
+//
+//  ・トップレベルのコードネーム窓（five_hour / nimbus_quill / cedar_ember …）は
+//    あえて 1 つも定義しない。定義すると使いたくなり、名前に依存した分岐が
+//    生まれる。分類は limits[] だけで行うという方針を、型の側から強制する。
+//
+//  ・数値はすべて nullable。percent が null で返ることを許容する。
+//    0 と「値なし」を混同すると「使っていない」と誤表示してしまう。
+// =============================================================================
+/// <summary>/api/oauth/usage のレスポンス。</summary>
 internal sealed class UsageResponseDto
 {
     [JsonPropertyName("limits")]

@@ -2,14 +2,36 @@ using ClaudeUsageTray.Config;
 
 namespace ClaudeUsageTray.Core;
 
-/// <summary>
-/// Phase 1 のポーリング。単純な固定間隔ループ。
-/// （401 の ShortWatch・指数バックオフ・resets_at 前倒しは Phase 2 で足す）
-///
-/// ★ 間隔の下限は 60 秒でハードクランプする。Claude Code 本体がキャッシュ実装で
-///   60 秒のスロットルをかけている以上、それより速く叩くのは礼儀違反であり
-///   429 のリスクでもある。設定でも 60 秒未満は許可しない。
-/// </summary>
+// =============================================================================
+//  ポーリング
+// -----------------------------------------------------------------------------
+//  【設計思想】
+//
+//  1. 行儀よく叩く。これが最優先。
+//     Claude Code 本体は同じエンドポイントを内部で 60 秒スロットルしている
+//     （「同一マシンの複数ウィンドウは直近 1 分の結果を共有する」とチェンジ
+//     ログにも明記がある）。本体より速く叩くのは筋が悪く、429 や WAF ブロック
+//     を招けば本体の認証まで巻き添えになりうる。
+//     → 間隔の下限 60 秒は設定でも破れないようハードクランプする。
+//     → 同時リクエストも投げない（UsageEndpointClient 側で直列化）。
+//     → ±10% のジッタを入れ、複数インスタンスや復帰時に時刻が揃わないようにする。
+//
+//  2. 認証は「本体に追従する」だけ。自分では何もしない。
+//     アクセストークンの寿命は約 4.7 時間なので、常駐していれば必ず期限切れに
+//     遭う。だが自前でリフレッシュはしない（Credentials.cs の注記参照）。
+//     毎回 .credentials.json を読み直し、本体が書き戻した新しいトークンを拾う。
+//
+//  3. 失敗しても前の値を捨てない。
+//     ネットワークが切れた瞬間に表示が空になると、常駐パネルとしては
+//     「壊れた」ように見える。状態だけ差し替えて数値は保持し、
+//     古さは UI 側で表現する。
+//
+//  【未実装（Phase 2 で足す）】
+//     ・401 後の ShortWatch（.credentials.json の mtime を短間隔で見張る）
+//     ・指数バックオフと Retry-After の尊重
+//     ・resets_at を過ぎた直後の前倒し取得
+//     ・Claude Code が 1 つも起動していないときの間隔引き延ばし
+// =============================================================================
 internal sealed class PollingService : IDisposable
 {
     public const int MinIntervalSeconds = 60;
@@ -30,13 +52,23 @@ internal sealed class PollingService : IDisposable
         _interval = TimeSpan.FromSeconds(Math.Max(MinIntervalSeconds, intervalSeconds));
     }
 
-    public void Start() => _loop = Task.Run(RunAsync);
+    /// <param name="initialDelay">
+    /// 自動起動から立ち上がった直後はログオン処理で I/O が混んでおり、
+    /// Claude Code 本体もまだ起動していないことが多い。少し待ってから最初の 1 回を投げる。
+    /// </param>
+    public void Start(TimeSpan initialDelay = default) => _loop = Task.Run(() => RunAsync(initialDelay));
 
     /// <summary>メニューの「今すぐ更新」用。</summary>
     public void RequestRefresh() => _ = Task.Run(() => PollOnceAsync(_cts.Token));
 
-    private async Task RunAsync()
+    private async Task RunAsync(TimeSpan initialDelay)
     {
+        if (initialDelay > TimeSpan.Zero)
+        {
+            try { await Task.Delay(initialDelay, _cts.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+        }
+
         while (!_cts.IsCancellationRequested)
         {
             await PollOnceAsync(_cts.Token).ConfigureAwait(false);

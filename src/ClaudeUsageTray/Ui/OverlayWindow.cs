@@ -9,17 +9,55 @@ using ClaudeUsageTray.Rendering;
 
 namespace ClaudeUsageTray.Ui;
 
-/// <summary>
-/// 画面に常時出しておく最前面パネル。
-///
-/// トレイアイコンは 16×16 に 2〜3 文字しか入らないため、5時間 / 週次 / モデル別を
-/// 同時に見せられない。こちらは任意幅のテキストをそのまま出せる。
-/// 使う API はすべて公開 API なので Windows Update で壊れにくい。
-///
-/// 操作:
-///   Ctrl+Shift+U … 移動モードの切り替え（クリック透過を解除してドラッグ可能にする）
-///   移動モード中の右クリック … メニュー
-/// </summary>
+// =============================================================================
+//  常時表示パネル（このアプリの UI のすべて）
+// -----------------------------------------------------------------------------
+//  【設計思想】
+//
+//  「常に見えていること」を最優先する。そのために見た目の凝りようや
+//  作業の邪魔をしない度合いは後回しにしている。見えなければ意味が無いため。
+//
+//  【なぜトレイアイコンを捨てたか】
+//
+//  元は macOS のメニューバー常駐アプリの移植として始まり、Windows でそれに
+//  相当するのは通知領域（トレイ）だと考えて実装した。しかし実際に動かして
+//  分かったのは、次の 2 つが要求と噛み合わないことだった。
+//
+//    1. 通知領域に渡せるのは論理 16×16 の正方形アイコン 1 枚だけ。
+//       macOS の NSStatusItem.button.title のような可変幅テキストは
+//       Windows に存在しない。読める文字数は実質 2〜3 文字で、
+//       5時間 / 週次 / モデル別を同時に見せることが物理的にできない。
+//
+//    2. Windows 11 は新規のトレイアイコンを既定でオーバーフロー（∧）に隠す。
+//       つまり状態を見るのに毎回クリックが要る。「常に見えていてほしい」
+//       という要求の真逆になる。
+//
+//  そこでトレイを完全にやめ、デスクトップに最前面パネルを 1 枚出す方式に
+//  切り替えた。文字数の制約が無く、値を横に並べるだけで済む。
+//
+//  【なぜこの実装方式なのか】
+//
+//  タスクバーへ直接描く方法（SetParent 埋め込み・Deskband）も検討したが、
+//  すべて未文書化 API か Windows 11 で廃止済みで、Update のたびに壊れる。
+//  ここで使うのは Form + 拡張スタイルという枯れた公開 API だけ
+//  （詳細は Platform/NativeMethods.cs の冒頭）。
+//
+//  【操作設計の考え方】
+//
+//  当初はクリック透過を既定 ON にしていた。作業の邪魔をしないという意味では
+//  正しいが、透過していると掴めないので移動もメニューも開けず、
+//  入口がグローバルホットキーだけになって「動かせないアプリ」になった。
+//
+//  → 既定は透過 OFF。掴めること・右クリックでメニューが出ることを優先する。
+//     画面の隅の小さなパネルなので、クリックを奪う害は小さい。
+//     邪魔なときだけメニューから透過を ON にし、その場合の移動は
+//     Ctrl+Shift+U（移動モード）で行う。
+//
+//  操作:
+//    ドラッグ            … 移動（位置は離した時点で保存）
+//    右クリック          … メニュー
+//    Ctrl+Shift+U        … 移動モード。透過 ON のときでも掴めるようにする
+// =============================================================================
 internal sealed class OverlayWindow : Form
 {
     private const int HotkeyIdMove = 0xC1A0;
@@ -375,7 +413,7 @@ internal sealed class OverlayWindow : Form
             first = false;
 
             list.Add(($"{label} ", dim));
-            list.Add(($"{Pct(row.Percent)}", IconTheme.Plate(row.SeverityRank, dark: true)));
+            list.Add(($"{Pct(row.Percent)}", SeverityColors.For(row.SeverityRank)));
 
             if (row.ResetsAt is { } r)
                 list.Add(($" {Remaining(r)}", dim));
@@ -388,9 +426,9 @@ internal sealed class OverlayWindow : Form
             AddLimit(scoped.ScopeName ?? "model", scoped);
 
         if (state.Status == FetchStatus.AuthRequired)
-            list.Add(("  │  Claude Code を起動してください", IconTheme.Plate(1, dark: true)));
+            list.Add(("  │  Claude Code を起動してください", SeverityColors.For(1)));
         else if (state.Status == FetchStatus.Offline)
-            list.Add(("  │  接続できません", IconTheme.Plate(1, dark: true)));
+            list.Add(("  │  接続できません", SeverityColors.For(1)));
         else if (state.Age is { } age && age > TimeSpan.FromMinutes(5))
             list.Add(($"  │  {(int)age.TotalMinutes}分前", dim));
 
