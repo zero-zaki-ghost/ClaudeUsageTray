@@ -92,11 +92,29 @@ internal static class Installer
             AutoStart.Disable();
             StopOtherInstances();
 
-            if (Directory.Exists(InstallDir) && !IsRunningFromInstallDir())
-                Directory.Delete(InstallDir, recursive: true);
+            bool deferred = false;
+
+            if (Directory.Exists(InstallDir))
+            {
+                if (IsRunningFromInstallDir())
+                {
+                    // ★ 自分自身が入っているフォルダは、自分が動いている間は消せない。
+                    //   案内どおりに配置先の exe を直接叩くと必ずこの経路に入るので、
+                    //   外部プロセスに「少し待ってから消す」よう頼んで抜ける。
+                    ScheduleSelfDelete();
+                    deferred = true;
+                }
+                else
+                {
+                    Directory.Delete(InstallDir, recursive: true);
+                }
+            }
 
             MessageBox.Show(
-                "自動起動を解除し、配置したファイルを削除しました。\n\n" +
+                "自動起動を解除しました。\n\n" +
+                (deferred
+                    ? $"配置したファイルは、このウィンドウを閉じた直後に削除されます:\n{InstallDir}\n\n"
+                    : $"配置したファイルを削除しました:\n{InstallDir}\n\n") +
                 $"設定とログは残しています:\n{AppPaths.AppDataDir}",
                 "ClaudeUsageTray", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -105,6 +123,32 @@ internal static class Installer
             Log.Error("アンインストールに失敗しました", ex);
             MessageBox.Show($"アンインストールに失敗しました。\n\n{ex.GetType().Name}: {Log.ShortMessage(ex)}",
                 "ClaudeUsageTray", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// 自分が入っているフォルダを、自分の終了後に消してもらう。
+    ///
+    /// cmd に「少し待つ → フォルダごと削除」を投げて、こちらは普通に終了する。
+    /// ウィンドウを出さないよう CreateNoWindow で起動する。
+    /// </summary>
+    private static void ScheduleSelfDelete()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                // timeout は待ち、rd はフォルダごと削除。&& ではなく & で繋ぎ、
+                // timeout が失敗しても削除は試みる。
+                Arguments = $"/c timeout /t 3 /nobreak > nul & rd /s /q \"{InstallDir}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"配置先の削除を予約できませんでした。手動で削除してください。({ex.GetType().Name})");
         }
     }
 
