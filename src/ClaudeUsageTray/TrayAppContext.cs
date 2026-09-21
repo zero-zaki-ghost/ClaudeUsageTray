@@ -4,6 +4,7 @@ using ClaudeUsageTray.Config;
 using ClaudeUsageTray.Core;
 using ClaudeUsageTray.Platform;
 using ClaudeUsageTray.Rendering;
+using ClaudeUsageTray.Ui;
 
 namespace ClaudeUsageTray;
 
@@ -14,9 +15,11 @@ internal sealed class TrayAppContext : ApplicationContext
     private const int TooltipMaxChars = 63;
 
     private readonly Options _options;
+    private readonly AppSettings _settings;
     private readonly NotifyIcon _notifyIcon;
     private readonly TrayIconSlot _slot;
     private readonly PollingService _polling;
+    private OverlayWindow? _overlay;
 
     /// <summary>ポーリングスレッドから UI スレッドへ戻すためだけの不可視コントロール。</summary>
     private readonly Control _marshal;
@@ -27,23 +30,34 @@ internal sealed class TrayAppContext : ApplicationContext
     {
         _options = options;
         AppPaths.EnsureAppDirectories();
+        _settings = AppSettings.Load();
 
         _marshal = new Control();
         _marshal.CreateControl();
 
+        // ★ 順序が重要: Icon を入れてから Visible = true にする。
+        //   アイコンが null のまま Visible にすると、シェルへの登録（NIM_ADD）が
+        //   中身の無い状態で走り、通知領域にも NotifyIconSettings にも現れない。
         _notifyIcon = new NotifyIcon
         {
             Text = "Claude 使用量",
-            Visible = true,
             ContextMenuStrip = BuildMenu(),
         };
 
         _slot = new TrayIconSlot(_notifyIcon);
-        Redraw(AppState.Initial);
+        Redraw(AppState.Initial);       // ここで Icon が入る
 
+        _notifyIcon.Visible = true;     // 実アイコンを持った状態で登録する
+
+        // ★ オーバーレイより先に作ること。オーバーレイは初回描画で _polling.Current を
+        //   読むので、逆順だと表示された瞬間に NullReference になる。
         _polling = new PollingService(options.Endpoint, options.IntervalSeconds);
         _polling.StateChanged += OnStateChanged;
         _polling.Start();
+
+        // 画面に常時出しておくパネル。トレイの 16px では 5 時間・週次・モデル別を
+        // 同時に見せられないため、こちらが主たる表示。
+        if (_settings.Overlay.Enabled) ShowOverlay();
 
         Log.Info($"起動しました。endpoint={options.Endpoint} interval={options.IntervalSeconds}s");
 
@@ -56,12 +70,40 @@ internal sealed class TrayAppContext : ApplicationContext
 
         menu.Items.Add("今すぐ更新", null, (_, _) => _polling.RequestRefresh());
         menu.Items.Add(new ToolStripSeparator());
+
+        var overlayItem = new ToolStripMenuItem("画面に常時表示する")
+        {
+            CheckOnClick = true,
+            Checked = _settings.Overlay.Enabled,
+        };
+        overlayItem.CheckedChanged += (_, _) => SetOverlayEnabled(overlayItem.Checked);
+        menu.Items.Add(overlayItem);
+
+        menu.Items.Add("表示位置を動かす（Ctrl+Shift+U）", null, (_, _) => _overlay?.ToggleMoveMode());
+
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("ログフォルダを開く…", null, (_, _) => OpenFolder(AppPaths.LogDir));
         menu.Items.Add("キャッシュフォルダを開く…", null, (_, _) => OpenFolder(AppPaths.CacheDir));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("終了", null, (_, _) => ExitThread());
 
         return menu;
+    }
+
+    private void ShowOverlay()
+    {
+        _overlay ??= new OverlayWindow(_settings, () => _polling.Current,
+                                       _notifyIcon.ContextMenuStrip!);
+        _overlay.Show();
+    }
+
+    private void SetOverlayEnabled(bool enabled)
+    {
+        _settings.Overlay.Enabled = enabled;
+        _settings.Save();
+
+        if (enabled) ShowOverlay();
+        else _overlay?.Hide();
     }
 
     private static void OpenFolder(string path)
@@ -107,6 +149,8 @@ internal sealed class TrayAppContext : ApplicationContext
         _slot.Update(key, () => TrayIconRenderer.Render(state, size, dark));
 
         _notifyIcon.Text = Clamp(BuildTooltip(state));
+
+        if (_overlay is { IsDisposed: false, Visible: true }) _overlay.Invalidate();
     }
 
     private static string Clamp(string s) =>
@@ -186,6 +230,9 @@ internal sealed class TrayAppContext : ApplicationContext
 
             _polling.StateChanged -= OnStateChanged;
             _polling.Dispose();
+
+            _overlay?.Dispose();
+            _overlay = null;
 
             // ★ これを忘れるとトレイにゴーストアイコンが残る
             _notifyIcon.Visible = false;
