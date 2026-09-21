@@ -20,11 +20,13 @@ Claude Code の使用量（5 時間 / 週次リミットの消費率）を、**W
 | | |
 |---|---|
 | [`docs/使い方.md`](docs/使い方.md) | インストール・操作・困ったときの対処 |
-| [`docs/設計.md`](docs/設計.md) | なぜこの作りなのか。各ソースの冒頭にも同じ観点のコメントがある |
+| [`docs/設計.md`](docs/設計.md) | **設計の正本。** なぜこの作りなのか、調査結果、実装フェーズ、懸念点 |
 
-設計の正本は `ideas` リポジトリの
-[`work/claude-usage-tray.md`](../ideas/work/claude-usage-tray.md)。
-ターミナル下部に出す別実装が [`work/claude-code-statusline.md`](../ideas/work/claude-code-statusline.md) にある。
+各ソースの冒頭にも【設計思想】コメントがある。
+
+関連: ターミナル下部に同種の情報を出す別実装が
+[`ideas/work/claude-code-statusline.md`](../ideas/work/claude-code-statusline.md) にある
+（Phase 4 の移植元）。
 
 ## 手早く始める
 
