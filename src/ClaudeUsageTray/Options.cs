@@ -37,7 +37,8 @@ internal sealed record Options(
             {
                 // Phase 1.5 のローカルスタブサーバに向けるため
                 case "--endpoint" when i + 1 < args.Length:
-                    if (Uri.TryCreate(args[++i], UriKind.Absolute, out var u)) endpoint = u;
+                    if (Uri.TryCreate(args[++i], UriKind.Absolute, out var u) && IsAllowedEndpoint(u))
+                        endpoint = u;
                     break;
 
                 case "--interval" when i + 1 < args.Length:
@@ -63,5 +64,29 @@ internal sealed record Options(
         interval = Math.Max(PollingService.MinIntervalSeconds, interval);
 
         return new Options(endpoint, interval, install, uninstall, fromStartup);
+    }
+
+    /// <summary>
+    /// ★ セキュリティ上の要: 取得先はアクセストークンを Bearer で送る相手になる。
+    ///
+    /// \-\-endpoint を無制限に許すと、ショートカットや Run キーを書き換えるだけで
+    /// 「トークンを任意のサーバへ送らせる」ことができてしまう。平文 http なら
+    /// 経路上でも読める。
+    ///
+    /// 許すのは次の 2 つだけ:
+    ///   ・https（検証用に別ホストを立てる場合）
+    ///   ・ループバック宛て（スタブサーバ。http でも可＝経路が端末内で閉じる）
+    ///
+    /// それ以外は黙って既定値に戻す。引数を無視するだけなのでアプリは動き続ける。
+    /// </summary>
+    private static bool IsAllowedEndpoint(Uri u)
+    {
+        if (u.Scheme == Uri.UriSchemeHttps) return true;
+
+        if (u.Scheme == Uri.UriSchemeHttp && u.IsLoopback) return true;
+
+        Config.Log.Warn(
+            $"--endpoint を無視しました（https かループバック宛てのみ許可）: {u.Scheme}://{u.Host}");
+        return false;
     }
 }
