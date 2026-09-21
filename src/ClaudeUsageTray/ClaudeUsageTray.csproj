@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <!-- [LibraryImport] のソースジェネレータが unsafe を要求する（SYSLIB1062） -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>ClaudeUsageTray</RootNamespace>
+    <AssemblyName>ClaudeUsageTray</AssemblyName>
+
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- ★ DPI 認識の唯一の設定源。ここを外すと 200% でアイコンが二重スケールしてボケる。
+         app.manifest 側には書かないこと（両方書くと WFO0003 警告）。 -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+
+    <!-- WinForms は NativeAOT / Trimming 非対応。framework-dependent 単一 exe で配る。 -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>
