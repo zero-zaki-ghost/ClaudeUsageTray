@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace ClaudeUsageTray.Core;
 
 // =============================================================================
@@ -73,9 +75,20 @@ internal sealed record LimitRow(
     {
         if (string.IsNullOrWhiteSpace(dto.Kind)) return null;
 
+        // ★ オフセットが無い文字列は UTC とみなす。
+        //
+        //   素の TryParse は、オフセットの無い "2026-09-23T12:00:00" を
+        //   **端末のローカル時刻**として解釈する。JST の端末なら UTC 03:00 になり、
+        //   実測で 9 時間ずれることを確認した。
+        //
+        //   現在サーバーは必ず +00:00 を付けてくるので今は表面化しないが、
+        //   1 度でも省略された日に、リセット時刻が黙って 9 時間ずれる。
+        //   AssumeUniversal はオフセット付きの解釈を変えないので、付けておいて損が無い。
         DateTimeOffset? resets = null;
         if (!string.IsNullOrWhiteSpace(dto.ResetsAt)
-            && DateTimeOffset.TryParse(dto.ResetsAt, out var parsed))
+            && DateTimeOffset.TryParse(dto.ResetsAt, CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                   out var parsed))
         {
             resets = parsed;
         }
