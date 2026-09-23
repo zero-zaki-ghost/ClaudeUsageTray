@@ -78,7 +78,8 @@ internal sealed class PollingService : IDisposable
             normalInterval: TimeSpan.FromSeconds(Math.Max(MinIntervalSeconds, intervalSeconds)),
             minInterval: TimeSpan.FromSeconds(MinIntervalSeconds));
 
-        _guards = [new ExpiredTokenGuard()];
+        // Guard は上から順に評価する。追加するときは「止める根拠が確かなもの」を先に。
+        _guards = [new ExpiredTokenGuard(ClaudeProcess.AnyRunning)];
     }
 
     /// <param name="initialDelay">
@@ -134,6 +135,18 @@ internal sealed class PollingService : IDisposable
     private async Task<NextPoll> PollOnceAsync()
     {
         var ct = _stop.Token;
+
+        // 本体が動いていなければ間隔を伸ばす。**止めはしない。**
+        // 週次リミットはアカウント単位なので、別の端末や claude.ai の利用でも
+        // 数字は動く（PollSchedule.Idle の注記）。
+        bool idle = !ClaudeProcess.AnyRunning();
+        if (idle != _schedule.Idle)
+        {
+            _schedule.Idle = idle;
+            Log.Info(idle
+                ? "Claude Code 本体が見つからないので、取得の間隔を伸ばします。"
+                : "Claude Code 本体を検出したので、取得の間隔を戻します。");
+        }
 
         try
         {

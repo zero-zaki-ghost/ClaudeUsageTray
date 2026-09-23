@@ -41,15 +41,16 @@ internal interface ISendGuard
 /// <summary>
 /// 失効が分かっているトークンを送らせない。
 ///
-/// ★ 唯一の逃げ道: 端末の時計が大きくずれていると、生きているトークンを
+/// ★ 時計ずれへの逃げ道: 端末の時計が大きくずれていると、生きているトークンを
 ///   失効と誤判定しうる（<c>expiresAt</c> は絶対時刻なので時計に依存する）。
 ///   そのとき「送らない」だけだとアプリが永久に沈黙し、しかも理由が分からない。
 ///   30 分に 1 回だけ送ってみて、自分の判断を疑う機会を残してある。
 ///
-///   本体プロセスの有無を見るようになれば（懸念 8）、時計に依存しない
-///   裏取りができるので、このプローブは落とせる。
+///   ただし **本体が 1 つも動いていないなら、そのプローブも要らない**。
+///   トークンを更新できるのは本体だけなので、動いていなければ更新は起きない。
+///   時計に依存しない確実な事実なので、こちらを優先する（懸念 8）。
 /// </summary>
-internal sealed class ExpiredTokenGuard : ISendGuard
+internal sealed class ExpiredTokenGuard(Func<bool> claudeRunning) : ISendGuard
 {
     private static readonly TimeSpan ProbeInterval = TimeSpan.FromMinutes(30);
 
@@ -67,19 +68,23 @@ internal sealed class ExpiredTokenGuard : ISendGuard
             return SendDecision.Send;
         }
 
+        bool running = claudeRunning();
+
+        // 本体が動いているのに失効したままなら、こちらの時計を疑う余地がある。
+        // 動いていないなら疑う必要は無い（更新できる者が居ないのだから当然失効する）。
         var now = DateTimeOffset.UtcNow;
-        if (now - _lastProbe >= ProbeInterval)
+        if (running && now - _lastProbe >= ProbeInterval)
         {
             _lastProbe = now;
-            Log.Warn("失効と判定しているが、端末の時計がずれている可能性もあるので 1 回だけ試します。");
+            Log.Warn("本体は動いているのに失効のままなので、時計のずれを疑って 1 回だけ試します。");
             return SendDecision.Send;
         }
 
         if (!_logged)
         {
             _logged = true;
-            Log.Warn($"トークンが {-credentials.Remaining.TotalMinutes:F0} 分前に失効しています。"
-                   + "Claude Code 本体が更新するまで送信を見送ります。");
+            Log.Warn($"トークンが {-credentials.Remaining.TotalMinutes:F0} 分前に失効しています"
+                   + $"（本体は{(running ? "起動中" : "未起動")}）。更新されるまで送信を見送ります。");
         }
 
         return SendDecision.Hold(FetchStatus.AuthRequired, Guidance);
