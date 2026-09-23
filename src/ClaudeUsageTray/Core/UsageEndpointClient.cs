@@ -67,11 +67,38 @@ internal sealed class UsageEndpointClient(Uri endpoint)
     /// <summary>同時リクエストを絶対に投げない（429 対策）。</summary>
     private static readonly SemaphoreSlim Gate = new(1, 1);
 
+    /// <summary>
+    /// ★ 最後に実際に送信した時刻。下限間隔の強制に使う。
+    ///
+    /// 「60 秒未満では叩かない」は README にも CLAUDE.md にも不変条件として
+    /// 書いてあるが、**守っていたのは PollingService の待ち時間計算だけ**だった。
+    /// メニューの「今すぐ更新」はそこを通らないので、連打すれば連打しただけ
+    /// 飛んでいた（＝不変条件が呼び出し側の作法に依存していた）。
+    ///
+    /// Log.Redact と同じ考え方で、**唯一の出口であるここで強制する**。
+    /// こうすれば誰がどう呼んでも破れない。
+    /// </summary>
+    private static DateTimeOffset _lastSentAt = DateTimeOffset.MinValue;
+
+    private static readonly TimeSpan MinSendInterval = TimeSpan.FromSeconds(60);
+
     public async Task<ServerUsage> FetchAsync(string accessToken, CancellationToken ct)
     {
         await Gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // ★ 下限に満たないうちは、送らずに待つ。
+            //   定期ループは元から 60 秒以上空けているのでここに入らない。
+            //   入るのは「今すぐ更新」を早く押したときだけ。
+            var since = DateTimeOffset.UtcNow - _lastSentAt;
+            if (since < MinSendInterval)
+            {
+                var wait = MinSendInterval - since;
+                Log.Info($"前回の送信から {since.TotalSeconds:F0} 秒しか経っていないので "
+                       + $"{wait.TotalSeconds:F0} 秒待ちます。");
+                await Task.Delay(wait, ct).ConfigureAwait(false);
+            }
+
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
 
@@ -84,6 +111,8 @@ internal sealed class UsageEndpointClient(Uri endpoint)
                 "User-Agent", $"claude-cli/{ClaudeVersion.Detect()} (external, cli)");
             req.Headers.TryAddWithoutValidation("Accept", "application/json");
 
+            _lastSentAt = DateTimeOffset.UtcNow;
+
             using var res = await Http.SendAsync(
                 req, HttpCompletionOption.ResponseContentRead, timeout.Token).ConfigureAwait(false);
 
@@ -91,7 +120,7 @@ internal sealed class UsageEndpointClient(Uri endpoint)
                 throw new UsageUnauthorizedException();
 
             if (!res.IsSuccessStatusCode)
-                throw new UsageHttpException(res.StatusCode, res.Headers.RetryAfter?.Delta);
+                throw new UsageHttpException(res.StatusCode, ParseRetryAfter(res));
 
             string body = await res.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             return Parse(body);
@@ -100,6 +129,33 @@ internal sealed class UsageEndpointClient(Uri endpoint)
         {
             Gate.Release();
         }
+    }
+
+    /// <summary>
+    /// ★ Retry-After には 2 つの形式がある。**両方読まないと「尊重した」ことにならない。**
+    ///
+    ///   Retry-After: 120                              → 秒数。HttpClient は Delta に入れる
+    ///   Retry-After: Wed, 23 Sep 2026 20:00:00 GMT    → 絶対時刻。Date に入り Delta は null
+    ///
+    /// 当初は Delta しか読んでおらず、日付形式が来ると**黙って無視**していた。
+    /// 「Retry-After を尊重する」と書きながら半分しか見ていない状態で、
+    /// これは何も書かないより有害（CLAUDE.md の「対策したつもりを文書化しない」）。
+    /// </summary>
+    private static TimeSpan? ParseRetryAfter(HttpResponseMessage res)
+    {
+        var header = res.Headers.RetryAfter;
+        if (header is null) return null;
+
+        if (header.Delta is { } delta)
+            return delta > TimeSpan.Zero ? delta : null;
+
+        if (header.Date is { } date)
+        {
+            var wait = date - DateTimeOffset.UtcNow;
+            return wait > TimeSpan.Zero ? wait : null;
+        }
+
+        return null;
     }
 
     internal static ServerUsage Parse(string body)

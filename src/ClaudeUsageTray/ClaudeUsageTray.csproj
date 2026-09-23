@@ -24,4 +24,11 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- 検証ハーネスから Core を直接叩けるようにする。
+         公開 API を増やすより internal のまま見せるほうが、
+         「テストのために設計を曲げた」痕跡が残らない。 -->
+    <InternalsVisibleTo Include="PollingHarness" />
+  </ItemGroup>
+
 </Project>
