@@ -119,5 +119,25 @@ dotnet run --project tests\PollingHarness # 取得まわりの検証（約 3 分
 `CLAUDE_CONFIG_DIR` を一時フォルダへ向けるので **本物の認証情報は使わない。**
 終了コード 0 が全項目 PASS。
 
+## 実機で動いているかを確かめる
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\verify-log.ps1
+```
+
+ログを読んで、**前回の Windows 起動以降**について判定を出す。
+
+```
+  [ OK ] 自動起動                 Run キー経由で起動した: 09:12:03
+  [ OK ] 429                      1 度も出ていない。
+  [ OK ] 失効トークンを送っていない
+  [ ?? ] 起床シグナル（OS 由来）  まだ観測されていない
+```
+
+**「再起動してログを見る」を目視に頼らないための道具。**
+どの行を探せばいいか分からない手順は、実質的に実行されない。
+`-All` でログ全体を対象にできる。終了コード 0 が「問題なし」。
+`[ ?? ]` は異常ではなく「まだ判定材料が無い」。
+
 .NET 9 / WinForms。framework-dependent なので .NET Desktop Runtime 9 が要る。
 `PublishTrimmed` と `PublishAot` は WinForms が非対応なので使わない。
