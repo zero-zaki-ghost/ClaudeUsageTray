@@ -110,7 +110,13 @@ NuGet 依存はゼロ。
 ```powershell
 dotnet build src\ClaudeUsageTray          # 開発用
 dotnet publish src\ClaudeUsageTray -c Release -o publish   # 配布用（単一 exe）
+dotnet run --project tests\PollingHarness # 取得まわりの検証（約 3 分）
 ```
+
+検証ハーネスは、失効トークンを送らないこと・起床シグナルで待機を打ち切ること・
+`Retry-After` を起床で破らないことを**実測で**確かめる。
+`CLAUDE_CONFIG_DIR` を一時フォルダへ向けるので **本物の認証情報は使わない。**
+終了コード 0 が全項目 PASS。
 
 .NET 9 / WinForms。framework-dependent なので .NET Desktop Runtime 9 が要る。
 `PublishTrimmed` と `PublishAot` は WinForms が非対応なので使わない。
