@@ -55,9 +55,24 @@ internal sealed class PollSchedule
         TimeSpan.FromSeconds(1800),
     ];
 
+    /// <summary>本体が動いていないときに通常間隔へ掛ける倍率（120 秒 → 600 秒）。</summary>
+    private const double IdleFactor = 5.0;
+
     private readonly TimeSpan _normal;
     private readonly TimeSpan _min;
     private readonly Random _jitter = new();
+
+    /// <summary>
+    /// Claude Code 本体が 1 つも動いていない状態か。
+    ///
+    /// ★ true でも取得を止めてはいけない。週次リミットはアカウント単位なので、
+    ///   別の端末や claude.ai の利用でも数字は動く。**間隔を伸ばすだけ。**
+    /// </summary>
+    public bool Idle { get; set; }
+
+    private TimeSpan Normal => Idle
+        ? TimeSpan.FromSeconds(_normal.TotalSeconds * IdleFactor)
+        : _normal;
 
     private int _failures;
     private int _successStreak;
@@ -100,7 +115,7 @@ internal sealed class PollSchedule
     /// 持ち越すと**送っていないのに復帰の検知だけが遅くなる**。
     /// 失敗回数と Retry-After は、次に実際に送るときのために残しておく。
     /// </summary>
-    public NextPoll AfterSkip() => new(Jitter(_normal, 0.1), Interruptible: true);
+    public NextPoll AfterSkip() => new(Jitter(Normal, 0.1), Interruptible: true);
 
     /// <summary>実際に送った周期の待ち時間。</summary>
     public NextPoll AfterSend()
@@ -122,11 +137,12 @@ internal sealed class PollSchedule
         if (_failures > 0)
         {
             var step = Ladder[Math.Min(_failures - 1, Ladder.Length - 1)];
-            return new NextPoll(Jitter(step > _normal ? step : _normal, 0.2), Interruptible: true);
+            var floor = Normal;
+            return new NextPoll(Jitter(step > floor ? step : floor, 0.2), Interruptible: true);
         }
 
         // ③ 通常。複数インスタンスや復帰時に時刻が揃うのを避ける。
-        return new NextPoll(Jitter(_normal, 0.1), Interruptible: true);
+        return new NextPoll(Jitter(Normal, 0.1), Interruptible: true);
     }
 
     private TimeSpan Jitter(TimeSpan span, double ratio)

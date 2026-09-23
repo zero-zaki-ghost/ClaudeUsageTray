@@ -192,6 +192,51 @@ Console.WriteLine("    サーバーが待てと言っているものを、こち
     Check("起床しても Retry-After を破らない", Hits() == 1, $"送信 {Hits()} 回（期待 1 のまま）");
 }
 
+// ============================================================================
+// ここから下は時計も通信も使わない。PollSchedule と ISendGuard が
+// 純粋な部品になっているので、即座に確かめられる。
+// ============================================================================
+Console.WriteLine("\n[4] 本体が動いていないときは間隔を伸ばす（止めはしない）");
+Console.WriteLine("    週次リミットはアカウント単位で、別端末や claude.ai の利用でも動く。");
+{
+    var schedule = new PollSchedule(TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(60));
+
+    schedule.Idle = false;
+    double busy = schedule.AfterSend().Delay.TotalSeconds;
+
+    schedule.Idle = true;
+    double idle = schedule.AfterSend().Delay.TotalSeconds;
+
+    // 120 秒 ±10% → 108〜132 / 600 秒 ±10% → 540〜660
+    Check("通常時は 120 秒前後", busy is >= 100 and <= 140, $"{busy:F0} 秒");
+    Check("本体が居ないときは 600 秒前後", idle is >= 520 and <= 680, $"{idle:F0} 秒");
+    Check("伸びるだけで、ゼロにはならない", idle > busy && idle < 3600, $"{busy:F0} → {idle:F0} 秒");
+}
+
+Console.WriteLine("\n[5] 失効ガードの判定（本体の起動状態で挙動が変わる）");
+{
+    var expired = new Credentials("x", DateTimeOffset.UtcNow.AddHours(-1), null);
+    var alive = new Credentials("x", DateTimeOffset.UtcNow.AddHours(1), null);
+
+    var whenStopped = new ExpiredTokenGuard(() => false);
+    var whenRunning = new ExpiredTokenGuard(() => true);
+
+    Check("生きているトークンは通す",
+        whenStopped.Evaluate(alive).ShouldSend && whenRunning.Evaluate(alive).ShouldSend,
+        "両方とも Send");
+
+    // 本体が動いていなければ更新される見込みが無いので、時計を疑うプローブも要らない。
+    bool everSent = false;
+    for (int i = 0; i < 50; i++)
+        if (whenStopped.Evaluate(expired).ShouldSend) everSent = true;
+
+    Check("失効 + 本体未起動なら 1 度も送らない", !everSent, "50 回評価して Send は 0 回");
+
+    Check("止めるときは必ず案内を伴う",
+        whenStopped.Evaluate(expired).Guidance is { Length: > 0 },
+        $"\"{whenStopped.Evaluate(expired).Guidance}\"");
+}
+
 Console.WriteLine($"\n==== PASS {passed} / FAIL {failed} ====");
 listener.Stop();
 return failed == 0 ? 0 : 1;
