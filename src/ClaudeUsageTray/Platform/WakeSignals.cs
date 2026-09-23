@@ -87,7 +87,8 @@ internal sealed class WakeSignals : IDisposable
             _lastRaised = now;
         }
 
-        Log.Info($"起床シグナル: {reason}");
+        // ログは出さない。受け手（PollingService.Wake）が理由つきで 1 行出すので、
+        // ここでも出すと同じ出来事が 2 行になる。間引かれた分は元から出ない。
 
         // ハンドラ側の例外でこちらが死なないようにする。OS のイベントスレッドで
         // 走るので、ここで落ちると原因が追いにくい場所に飛ぶ。

@@ -58,8 +58,11 @@ internal sealed class PollingService : IDisposable
 
     private readonly CancellationTokenSource _stop = new();
 
-    /// <summary>いま走っている待機。起床シグナルはこれを打ち切るだけ。</summary>
+    /// <summary>いま走っている待機。起床シグナルはこれを打ち切る。</summary>
     private CancellationTokenSource? _sleep;
+
+    /// <summary>待機に入る前に届いた起床要求。次の待機で消費する（Wake の注記を参照）。</summary>
+    private bool _wakePending;
 
     private readonly Lock _sleepGate = new();
     private Task? _loop;
@@ -99,11 +102,20 @@ internal sealed class PollingService : IDisposable
     {
         lock (_sleepGate)
         {
-            // Cancel できなければ待機していない（＝いま取得中）。
-            // 放っておけば、この直後の周期で最新を取りに行く。
+            // ★ 取りこぼし防止。
+            //   起床が来るのは「待機中」とは限らない。取得中かもしれないし、
+            //   待機に入る直前（CTS を作ってから _sleep に入れるまで）かもしれない。
+            //   Cancel だけに頼るとその隙間で消える。消えた起床は、
+            //   ネットワーク復帰を最大 30 分取りこぼすということで、
+            //   **起床シグナルを入れた目的そのものを損なう。**
+            //   要求を旗で残し、次に待機へ入るときに消費する。
+            _wakePending = true;
+
             try { _sleep?.Cancel(); }
             catch (ObjectDisposedException) { }
         }
+
+        Log.Info($"起床: {reason}");
     }
 
     private async Task RunAsync(TimeSpan initialDelay)
@@ -204,7 +216,14 @@ internal sealed class PollingService : IDisposable
             if (next.Interruptible)
             {
                 sleep = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-                lock (_sleepGate) _sleep = sleep;
+
+                lock (_sleepGate)
+                {
+                    // 待機へ入る前に届いていた起床要求は、待たずに消費する。
+                    if (_wakePending) return !_stop.IsCancellationRequested;
+
+                    _sleep = sleep;
+                }
             }
 
             await Task.Delay(next.Delay, sleep?.Token ?? _stop.Token).ConfigureAwait(false);
@@ -217,14 +236,17 @@ internal sealed class PollingService : IDisposable
         }
         finally
         {
-            if (sleep is not null)
+            lock (_sleepGate)
             {
-                lock (_sleepGate)
-                {
-                    if (ReferenceEquals(_sleep, sleep)) _sleep = null;
-                }
-                sleep.Dispose();
+                // ★ ここを抜けた直後に必ず 1 回取得するので、
+                //   どの経路で抜けても起床要求は果たされたことになる。
+                //   消さずに残すと、1 回の起床で 2 回取りに行ってしまう。
+                _wakePending = false;
+
+                if (sleep is not null && ReferenceEquals(_sleep, sleep)) _sleep = null;
             }
+
+            sleep?.Dispose();
         }
     }
 
@@ -248,16 +270,19 @@ internal sealed class PollingService : IDisposable
 
     public void Dispose()
     {
+        // _sleep は _stop にぶら下げた子なので、これだけで待機も同時に解ける。
         _stop.Cancel();
 
-        lock (_sleepGate)
-        {
-            try { _sleep?.Cancel(); }
-            catch (ObjectDisposedException) { }
-        }
+        bool finished = false;
+        try { finished = _loop?.Wait(TimeSpan.FromSeconds(2)) ?? true; }
+        catch { /* 終了時の例外は無視 */ }
 
-        try { _loop?.Wait(TimeSpan.FromSeconds(2)); } catch { /* 終了時の例外は無視 */ }
-
-        _stop.Dispose();
+        // ★ ループが終わっていないのに Dispose してはいけない。
+        //   ループはまだ _stop.Token を Task.Delay に渡すので、
+        //   破棄済みだと ObjectDisposedException になり、
+        //   誰も見ていない Task の例外として消える（原因を追えなくなる）。
+        //   終了間際にリークしても実害は無いので、生きているなら放置する。
+        if (finished) _stop.Dispose();
+        else Log.Warn("ポーリングの停止を確認できませんでした。");
     }
 }
