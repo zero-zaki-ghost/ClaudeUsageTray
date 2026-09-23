@@ -49,7 +49,8 @@ dotnet publish src\ClaudeUsageTray -c Release -o publish
 | 常時表示パネル（移動・位置記憶・クリック透過・全画面時の退避） | ✅ |
 | 自動起動 | ✅ |
 | 指数バックオフ・`Retry-After` 尊重・失効トークンを送らない | ✅ |
-| 401 の ShortWatch・`resets_at` 前倒し取得 | ⬜ |
+| ネット復帰 / スリープ復帰 / ロック解除で即座に取り直す | ✅ |
+| 本体プロセスの検出・401 の ShortWatch・`resets_at` 前倒し取得 | ⬜ |
 | ローカル JSONL 集計（トークン数・コスト・現在セッション） | ⬜ |
 | しきい値超過の通知 | ⬜ |
 
@@ -81,15 +82,26 @@ dotnet publish src\ClaudeUsageTray -c Release -o publish
 
 ```
 src/ClaudeUsageTray/
-  Core/        使用量の取得（認証情報の読み取り・HTTP・DTO・ポーリング）
+  Core/        使用量の取得（認証情報・HTTP・DTO・間隔の判断・送信可否の判断）
   Ui/          常時表示パネル
-  Platform/    Win32 P/Invoke・単一インスタンス・自動起動・配置
+  Platform/    Win32 P/Invoke・単一インスタンス・自動起動・配置・OS イベント
   Config/      パス・設定・ログ
   Rendering/   severity の色
 ```
 
-`Core` / `Config` は `System.Windows.Forms` と `System.Drawing` を参照しない。
+`Core` / `Config` は **`System.Windows.Forms` / `System.Drawing` も `Platform` も参照しない。**
 この規約だけでレイヤを保っている（テストから直接叩けることが保証になる）。
+
+取得まわりは役割を 3 つに割ってある。
+
+| | 持つもの |
+|---|---|
+| `PollSchedule` | **いつ投げるか**だけ。純粋なので時計も通信も無しでテストできる |
+| `ISendGuard` | **投げてよいか**。止める理由と画面に出す案内文をセットで返す |
+| `PollingService` | 上の 2 つに従って投げ、結果を表示状態へ変換する |
+
+**取得の入口はループ 1 本だけ。** 「今すぐ更新」や OS イベントは
+`Wake()` で待機を打ち切るだけで、取得は必ず同じ経路を通る。
 
 NuGet 依存はゼロ。
 

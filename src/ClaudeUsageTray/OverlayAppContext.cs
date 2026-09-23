@@ -34,6 +34,7 @@ internal sealed class OverlayAppContext : ApplicationContext
 {
     private readonly AppSettings _settings;
     private readonly PollingService _polling;
+    private readonly WakeSignals _wake;
     private readonly ContextMenuStrip _menu;
     private readonly OverlayWindow _overlay;
 
@@ -52,6 +53,12 @@ internal sealed class OverlayAppContext : ApplicationContext
 
         _polling = new PollingService(options.Endpoint, options.IntervalSeconds);
         _polling.StateChanged += OnStateChanged;
+
+        // OS のイベント（ネットワーク復帰・スリープ復帰・ロック解除）を
+        // ポーリングの「起床」へ流す。配線をここに置いているのは、
+        // Core が Platform に依存しないようにするため（PollingService の 5）。
+        _wake = new WakeSignals();
+        _wake.Woke += _polling.Wake;
 
         _menu = BuildMenu();
 
@@ -189,6 +196,11 @@ internal sealed class OverlayAppContext : ApplicationContext
         if (disposing && !_disposed)
         {
             _disposed = true;
+
+            // 起床シグナルを先に切る。OS の静的イベントを掴んだままだと
+            // 終了後もコールバックが飛び、このオブジェクトが回収されない。
+            _wake.Woke -= _polling.Wake;
+            _wake.Dispose();
 
             _polling.StateChanged -= OnStateChanged;
             _polling.Dispose();
