@@ -21,6 +21,7 @@ namespace ClaudeUsageTray.Platform;
 //    ・SetWindowLongPtr / GetWindowLongPtr … 拡張スタイルの読み書き
 //    ・RegisterHotKey / UnregisterHotKey   … グローバルホットキー
 //    ・SHQueryUserNotificationState        … 全画面アプリの検出
+//    ・GetWindow / SetWindowPos            … 最前面から落ちたときの復帰
 //
 //  新しい P/Invoke を足すときは「これは公開 API か」「壊れたときアプリが
 //  死ぬか、機能が 1 つ減るだけで済むか」を必ず考えること。
@@ -41,6 +42,7 @@ internal static partial class NativeMethods
     public const int WS_EX_LAYERED = 0x00080000;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_NOACTIVATE = 0x08000000;
+    public const int WS_EX_TOPMOST = 0x00000008;
 
     // 32bit 版の SetWindowLong ではなく Ptr 版を使う。x64 では ExStyle も
     // ポインタ幅で扱われるため、32bit 版だと上位ビットを落とす危険がある。
@@ -70,6 +72,27 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    // ---- 最前面の維持 ----
+    //
+    // WS_EX_TOPMOST が付いたまま通常帯へ落ちることがある（実機で起動 4 日後に
+    // 217 番目まで沈んでいた。きっかけは未特定）。フラグを見ても判定できないので、
+    // 自分のすぐ上のウィンドウが最前面かどうかで「帯」を判定する。
+
+    public const uint GW_HWNDPREV = 3;
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOACTIVATE = 0x0010;
+    public const uint SWP_NOOWNERZORDER = 0x0200;
+
+    [LibraryImport("user32.dll")]
+    public static partial IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [LibraryImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+        int x, int y, int cx, int cy, uint uFlags);
 
     // ---- 全画面アプリの検出 ----
     //
