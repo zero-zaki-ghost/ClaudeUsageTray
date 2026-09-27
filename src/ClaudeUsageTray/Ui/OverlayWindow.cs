@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using ClaudeUsageTray.Config;
 using ClaudeUsageTray.Core;
@@ -73,6 +74,9 @@ internal sealed class OverlayWindow : Form
     private bool _dragging;
     private bool _hovered;
 
+    private int _topMostRecoveries;
+    private DateTime _lastTopMostLog = DateTime.MinValue;
+
     /// <summary>
     /// ★ CreateParams に含めるのが肝。SetWindowLongPtr で後付けするだけだと、
     ///   Opacity を変えたときに WinForms が CreateParams から ExStyle を作り直して
@@ -99,7 +103,7 @@ internal sealed class OverlayWindow : Form
 
         // 1 秒ごとにカウントダウンを更新する
         _tick = new System.Windows.Forms.Timer { Interval = 1000 };
-        _tick.Tick += (_, _) => { UpdateFullscreenVisibility(); Invalidate(); };
+        _tick.Tick += (_, _) => { UpdateFullscreenVisibility(); EnsureTopMost(); Invalidate(); };
     }
 
     protected override CreateParams CreateParams
@@ -300,6 +304,47 @@ internal sealed class OverlayWindow : Form
 
         _hiddenByFullscreen = hide;
         Visible = !hide;
+    }
+
+    // ---- 最前面から落ちたら戻す ----
+    //
+    // ★ TopMost = true は起動時に 1 回付けるだけでは足りない。
+    //   実機で、WS_EX_TOPMOST が付いたまま通常帯へ落ち、サクラエディタや
+    //   Chrome の裏に隠れていた（起動 4 日後。きっかけは未特定・issue #3）。
+    //   フラグは残るので TopMost プロパティを見ても分からない。
+    //
+    // 判定は「すぐ上のウィンドウが最前面か」。最前面帯にいれば上は必ず最前面
+    // なので、そうでなければ落ちている。落ちていないときは何もしないので、
+    // 他の最前面ウィンドウと順番を奪い合わない。
+    //
+    // ⚠ すぐ上のウィンドウが「同じように落ちた最前面ウィンドウ」だと見逃す。
+    //   その場合も相手の下に隠れるだけで、普通のウィンドウより下なのは変わらない。
+
+    private void EnsureTopMost()
+    {
+        if (!Visible || !IsHandleCreated) return;
+
+        var above = NativeMethods.GetWindow(Handle, NativeMethods.GW_HWNDPREV);
+        if (above == IntPtr.Zero) return;   // Z オーダーの先頭 = 誰にも隠されていない
+
+        var ex = (long)NativeMethods.GetWindowLongPtr(above, NativeMethods.GWL_EXSTYLE);
+        if ((ex & NativeMethods.WS_EX_TOPMOST) != 0) return;
+
+        bool ok = NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_NOOWNERZORDER);
+
+        _topMostRecoveries++;
+
+        // 戻せないまま毎秒書き続けないよう、記録は 10 分に 1 回まで
+        var now = DateTime.Now;
+        if (now - _lastTopMostLog < TimeSpan.FromMinutes(10)) return;
+        _lastTopMostLog = now;
+
+        if (ok)
+            Log.Info($"最前面から外れていたので戻しました（通算 {_topMostRecoveries} 回）。");
+        else
+            Log.Warn($"最前面へ戻せませんでした（通算 {_topMostRecoveries} 回、Win32 エラー {Marshal.GetLastPInvokeError()}）。");
     }
 
     // ---- 描画 ----
