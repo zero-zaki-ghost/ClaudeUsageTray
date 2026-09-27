@@ -220,7 +220,31 @@ $($leak.Count) 行。Log.Redact が効いていないか、古いビルドの記
     Report 'OK' 'ログにユーザー名が出ていない' '絶対パスは %USERPROFILE% に畳まれている。'
 }
 
-# ---------------------------------------------------------------- 7. いま取れているか
+# ---------------------------------------------------------------- 7. 最前面の維持（issue #3）
+# WS_EX_TOPMOST が付いたまま通常帯へ落ちることがある。落ちたら 1 秒以内に戻して記録する。
+# 戻せた記録は「落ちるきっかけ」を絞り込む材料なので、時刻を並べて出す。
+$topRestored = @($entries | Where-Object { $_.Message -like '最前面から外れていたので戻しました*' })
+$topFailed = @($entries | Where-Object { $_.Message -like '最前面へ戻せませんでした*' })
+
+if ($topFailed.Count -gt 0) {
+    Report 'NG' '最前面へ戻せていない' @"
+$($topFailed.Count) 回。パネルが普通のウィンドウの裏に隠れたままの可能性がある。
+最後: $($topFailed[-1].Time.ToString('MM-dd HH:mm:ss')) $($topFailed[-1].Message)$(OldNote $topFailed[-1].Time)
+"@
+} elseif ($topRestored.Count -gt 0) {
+    $times = ($topRestored | Select-Object -Last 5 | ForEach-Object { $_.Time.ToString('MM-dd HH:mm') }) -join ' / '
+    Report 'OK' '最前面の維持' @"
+外れたのを $($topRestored.Count) 回戻した（記録は 10 分に 1 回まで）。
+直近: $times
+前後の「起床:」の行と突き合わせると、外れるきっかけを絞り込める。
+"@
+} else {
+    Report '??' '最前面の維持' @'
+外れた記録が無い。まだ起きていないだけかもしれない（正常）。
+'@
+}
+
+# ---------------------------------------------------------------- 8. いま取れているか
 $cache = Join-Path $env:LOCALAPPDATA 'ClaudeUsageTray\cache\last-usage.json'
 
 if (Test-Path $cache) {

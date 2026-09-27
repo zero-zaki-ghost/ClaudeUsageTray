@@ -56,7 +56,7 @@ dotnet publish src\ClaudeUsageTray -c Release -o publish
 ## 確かめる
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File tools\verify-log.ps1   # 実機の状態。7 項目
+powershell -ExecutionPolicy Bypass -File tools\verify-log.ps1   # 実機の状態。8 項目
 dotnet run --project tests\PollingHarness                        # 取得まわり。14 項目・約 3 分
 ```
 
