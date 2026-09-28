@@ -21,7 +21,7 @@ namespace ClaudeUsageTray.Platform;
 //    ・SetWindowLongPtr / GetWindowLongPtr … 拡張スタイルの読み書き
 //    ・RegisterHotKey / UnregisterHotKey   … グローバルホットキー
 //    ・SHQueryUserNotificationState        … 全画面アプリの検出
-//    ・GetWindow / SetWindowPos            … 最前面から落ちたときの復帰
+//    ・GetWindow / SetWindowPos ほか       … 最前面から落ちたときの復帰
 //
 //  新しい P/Invoke を足すときは「これは公開 API か」「壊れたときアプリが
 //  死ぬか、機能が 1 つ減るだけで済むか」を必ず考えること。
@@ -77,7 +77,8 @@ internal static partial class NativeMethods
     //
     // WS_EX_TOPMOST が付いたまま通常帯へ落ちることがある（実機で起動 4 日後に
     // 217 番目まで沈んでいた。きっかけは未特定）。フラグを見ても判定できないので、
-    // 自分のすぐ上のウィンドウが最前面かどうかで「帯」を判定する。
+    // 自分より上に「最前面でない可視ウィンドウ」があるかどうかで「帯」を判定する。
+    // ★ すぐ上の 1 枚だけでは足りない。タスクバーが一緒に沈んでいて騙された（issue #4）。
 
     public const uint GW_HWNDPREV = 3;
     public static readonly IntPtr HWND_TOPMOST = new(-1);
@@ -88,6 +89,17 @@ internal static partial class NativeMethods
 
     [LibraryImport("user32.dll")]
     public static partial IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsWindowVisible(IntPtr hWnd);
+
+    // 以下 2 つは、被さっていたウィンドウをログに残すためだけに使う
+    [LibraryImport("user32.dll", EntryPoint = "GetClassNameW", StringMarshalling = StringMarshalling.Utf16)]
+    public static partial int GetClassName(IntPtr hWnd, [Out] char[] lpClassName, int nMaxCount);
+
+    [LibraryImport("user32.dll")]
+    public static partial uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [LibraryImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

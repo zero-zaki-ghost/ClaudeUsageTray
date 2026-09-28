@@ -313,22 +313,60 @@ internal sealed class OverlayWindow : Form
     //   Chrome の裏に隠れていた（起動 4 日後。きっかけは未特定・issue #3）。
     //   フラグは残るので TopMost プロパティを見ても分からない。
     //
-    // 判定は「すぐ上のウィンドウが最前面か」。最前面帯にいれば上は必ず最前面
-    // なので、そうでなければ落ちている。落ちていないときは何もしないので、
-    // 他の最前面ウィンドウと順番を奪い合わない。
+    // 判定は「自分より上に、最前面でない可視ウィンドウが 1 枚でもあるか」。
+    // 最前面帯にいれば上は最前面ウィンドウだけなので、あれば落ちている。
+    // 落ちていないときは何もしないので、他の最前面ウィンドウと順番を奪い合わない。
     //
-    // ⚠ すぐ上のウィンドウが「同じように落ちた最前面ウィンドウ」だと見逃す。
-    //   その場合も相手の下に隠れるだけで、普通のウィンドウより下なのは変わらない。
+    // ★ 当初は「すぐ上の 1 枚」だけを見ていて、見逃した（issue #4）。
+    //   プライマリのタスクバーもフラグ付きのまま一緒に沈んでおり、それがすぐ上に
+    //   いたため「最前面帯にいる」と誤判定した。実際はさらに上に Chrome などが
+    //   20 枚以上被さっていた。最前面ウィンドウが 1 枚だけ沈むとは限らない。
+
+    /// <summary>辿る上限。GetWindow のループは Z オーダーが途中で変わると巡回しうる。</summary>
+    private const int MaxWalk = 1000;
+
+    /// <summary>自分より上にある「最前面でない可視ウィンドウ」を 1 枚返す。無ければ Zero。</summary>
+    private IntPtr FindCoveringWindow()
+    {
+        var h = Handle;
+        for (int i = 0; i < MaxWalk; i++)
+        {
+            h = NativeMethods.GetWindow(h, NativeMethods.GW_HWNDPREV);
+            if (h == IntPtr.Zero) return IntPtr.Zero;   // 先頭まで辿った = 誰にも隠されていない
+
+            if (!NativeMethods.IsWindowVisible(h)) continue;
+
+            var ex = (long)NativeMethods.GetWindowLongPtr(h, NativeMethods.GWL_EXSTYLE);
+            if ((ex & NativeMethods.WS_EX_TOPMOST) == 0) return h;
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>きっかけを絞り込むための手がかり。タイトルはファイル名を含みうるので出さない。</summary>
+    private static string Describe(IntPtr h)
+    {
+        var buf = new char[256];
+        int n = NativeMethods.GetClassName(h, buf, buf.Length);
+        string cls = n > 0 ? new string(buf, 0, n) : "?";
+
+        string proc = "?";
+        try
+        {
+            NativeMethods.GetWindowThreadProcessId(h, out uint pid);
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            proc = p.ProcessName;
+        }
+        catch (Exception) { /* 既に終了している。手がかりが 1 つ減るだけ */ }
+
+        return $"{proc} / {cls}";
+    }
 
     private void EnsureTopMost()
     {
         if (!Visible || !IsHandleCreated) return;
 
-        var above = NativeMethods.GetWindow(Handle, NativeMethods.GW_HWNDPREV);
-        if (above == IntPtr.Zero) return;   // Z オーダーの先頭 = 誰にも隠されていない
-
-        var ex = (long)NativeMethods.GetWindowLongPtr(above, NativeMethods.GWL_EXSTYLE);
-        if ((ex & NativeMethods.WS_EX_TOPMOST) != 0) return;
+        var cover = FindCoveringWindow();
+        if (cover == IntPtr.Zero) return;
 
         bool ok = NativeMethods.SetWindowPos(Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE |
@@ -341,10 +379,14 @@ internal sealed class OverlayWindow : Form
         if (now - _lastTopMostLog < TimeSpan.FromMinutes(10)) return;
         _lastTopMostLog = now;
 
+        // GetLastPInvokeError は次の P/Invoke で上書きされるので、Describe より先に取る
+        int err = ok ? 0 : Marshal.GetLastPInvokeError();
+        string by = Describe(cover);
+
         if (ok)
-            Log.Info($"最前面から外れていたので戻しました（通算 {_topMostRecoveries} 回）。");
+            Log.Info($"最前面から外れていたので戻しました（通算 {_topMostRecoveries} 回、被さっていたもの: {by}）。");
         else
-            Log.Warn($"最前面へ戻せませんでした（通算 {_topMostRecoveries} 回、Win32 エラー {Marshal.GetLastPInvokeError()}）。");
+            Log.Warn($"最前面へ戻せませんでした（通算 {_topMostRecoveries} 回、Win32 エラー {err}、被さっていたもの: {by}）。");
     }
 
     // ---- 描画 ----
