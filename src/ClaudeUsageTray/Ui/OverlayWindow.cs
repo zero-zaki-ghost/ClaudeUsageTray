@@ -413,6 +413,7 @@ internal sealed class OverlayWindow : Form
         const int padX = 10;
         float x = padX;
         float totalH = 0;
+        char widest = WidestDigit(g, font, format);
 
         foreach (var (text, color) in segments)
         {
@@ -421,7 +422,7 @@ internal sealed class OverlayWindow : Form
 
             using var brush = new SolidBrush(color);
             g.DrawString(text, font, brush, new PointF(x, 0), format);
-            x += size.Width;
+            x += SlotWidth(g, text, font, format, widest);
         }
 
         // 実際の内容に合わせて幅・高さを詰める
@@ -456,7 +457,7 @@ internal sealed class OverlayWindow : Form
             {
                 using var brush = new SolidBrush(color);
                 g.DrawString(text, font, brush, new PointF(x, top), format);
-                x += g.MeasureString(text, font, PointF.Empty, format).Width;
+                x += SlotWidth(g, text, font, format, widest);
             }
         }
 
@@ -472,6 +473,33 @@ internal sealed class OverlayWindow : Form
             g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
             DrawGrip(g);
         }
+    }
+
+    // ---- 数字の幅を揃える ----
+    //
+    // ★ Segoe UI の数字は等幅のはずだが、GenericTypographic + ClearTypeGridFit で
+    //   測ると揃わない（13px で "1" だけ 5.2px、他は 7.0〜7.5px）。
+    //   1 時間を切ると残り時間が毎秒変わるので、"12:10" → "12:11" → "12:08" と
+    //   幅が 2px ずつ揺れ、パネルの枠が毎秒伸び縮みしていた。
+    //   → 数字を「いちばん広い数字」に置き換えた幅で枠を取る。文字そのものは変えない。
+    //   桁数が変わるとき（"10:00" → "9:59"）だけは縮む。1 時間に 1 回なので許容する。
+
+    private static char WidestDigit(Graphics g, Font font, StringFormat format)
+    {
+        char widest = '0';
+        float max = 0;
+        for (char c = '0'; c <= '9'; c++)
+        {
+            float w = g.MeasureString(c.ToString(), font, PointF.Empty, format).Width;
+            if (w > max) { max = w; widest = c; }
+        }
+        return widest;
+    }
+
+    private static float SlotWidth(Graphics g, string text, Font font, StringFormat format, char widest)
+    {
+        var template = new string(text.Select(c => char.IsAsciiDigit(c) ? widest : c).ToArray());
+        return g.MeasureString(template, font, PointF.Empty, format).Width;
     }
 
     /// <summary>左端に点 6 個のグリップを描く。「ここを掴んで動かせる」の合図。</summary>
